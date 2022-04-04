@@ -1,20 +1,20 @@
 /**
-* Create, import, and export ethereum keys.
-* @author Jack Peterson (jack@tinybike.net)
-*/
+ * Create, import, and export ethereum keys.
+ * @author Jack Peterson (jack@tinybike.net)
+ */
 
 "use strict";
 
+var isBrowser = typeof process === "undefined" || !process.nextTick || Boolean(process.browser);
 
-var isBrowser = typeof process === 'undefined' || !process.nextTick || Boolean(process.browser);
-
-var sjcl = require('sjcl');
-var uuid = require('uuid');
-var secp256k1 = require('secp256k1/elliptic');
+var sjcl = require("sjcl");
+var uuid = require("uuid");
+var secp256k1 = require("secp256k1/elliptic");
+var scrypt = require("scrypt-js");
 const SHA = require('js-sha3');
 
-function isFunction (f) {
-    return typeof f === 'function';
+function isFunction(f) {
+    return typeof f === "function";
 }
 
 function sha3_256(buffer) {
@@ -154,7 +154,9 @@ module.exports = {
                 privateKeyBuffer
             ]);
         }
-        publicKey = secp256k1.publicKeyCreate(privateKeyBuffer, false).slice(1);
+        publicKey = Buffer.from(
+            secp256k1.publicKeyCreate(privateKeyBuffer, false).slice(1)
+        );
         return "0x" + sha3_256(publicKey).slice(-20).toString("hex");
     },
 
@@ -197,44 +199,21 @@ module.exports = {
     /**
      * Used internally.
      */
-    deriveKeyUsingScryptInNode: function (password, salt, options, cb) {
-        if (!isFunction(cb)) return this.deriveKeyUsingScryptInBrowser(password, salt, options);
-        require("scrypt").hash(password, {
-            N: options.kdfparams.n || this.constants.scrypt.n,
-            r: options.kdfparams.r || this.constants.scrypt.r,
-            p: options.kdfparams.p || this.constants.scrypt.p
-        }, options.kdfparams.dklen || this.constants.scrypt.dklen, salt).then(cb).catch(cb);
-    },
-
-    /**
-     * Used internally.
-     */
-    deriveKeyUsingScryptInBrowser: function (password, salt, options, cb) {
-        var self = this;
-        if (this.scrypt === null) this.scrypt = require("./scrypt");
-        if (isFunction(this.scrypt)) {
-            this.scrypt = this.scrypt(options.kdfparams.memory || this.constants.scrypt.memory);
+    deriveKeyUsingScrypt: function (password, salt, options, cb) {
+        var n = options.kdfparams.n || this.constants.scrypt.n;
+        var r = options.kdfparams.r || this.constants.scrypt.r;
+        var p = options.kdfparams.p || this.constants.scrypt.p;
+        var dklen = options.kdfparams.dklen || this.constants.scrypt.dklen;
+        if (isFunction(cb)) {
+            scrypt
+                .scrypt(password, salt, n, r, p, dklen)
+                .then(function (key) {
+                    cb(Buffer.from(key));
+                })
+                .catch(cb);
+        } else {
+            return Buffer.from(scrypt.syncScrypt(password, salt, n, r, p, dklen));
         }
-        if (!isFunction(cb)) {
-            return Buffer.from(this.scrypt.to_hex(this.scrypt.crypto_scrypt(
-                password,
-                salt,
-                options.kdfparams.n || this.constants.scrypt.n,
-                options.kdfparams.r || this.constants.scrypt.r,
-                options.kdfparams.p || this.constants.scrypt.p,
-                options.kdfparams.dklen || this.constants.scrypt.dklen
-            )), "hex");
-        }
-        setTimeout(function () {
-            cb(Buffer.from(self.scrypt.to_hex(self.scrypt.crypto_scrypt(
-                password,
-                salt,
-                options.kdfparams.n || self.constants.scrypt.n,
-                options.kdfparams.r || self.constants.scrypt.r,
-                options.kdfparams.p || self.constants.scrypt.p,
-                options.kdfparams.dklen || self.constants.scrypt.dklen
-            )), "hex"));
-        }, 0);
     },
 
     /**
@@ -262,9 +241,9 @@ module.exports = {
 
         // use scrypt as key derivation function
         if (options.kdf === "scrypt") {
-            if (!this.browser) return this.deriveKeyUsingScryptInNode(password, salt, options, cb);
-            return this.deriveKeyUsingScryptInBrowser(password, salt, options, cb);
+            return this.deriveKeyUsingScrypt(password, salt, options, cb);
         }
+
         // use default key derivation function (PBKDF2)
         prf = options.kdfparams.prf || this.constants.pbkdf2.prf;
         if (prf === "hmac-sha256") prf = "sha256";
@@ -398,8 +377,6 @@ module.exports = {
                 salt: salt.toString("hex")
             };
         }
-
-
 
         return keyObject;
     },

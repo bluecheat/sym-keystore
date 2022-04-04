@@ -4,6 +4,8 @@
 const SymKeystore =  require("../index.js");
 
 describe("Keystore Test", function () {
+    this.timeout(15000);
+
     it("Create privateKey", async() => {
         const privateKey = await SymKeystore.createPrivateKey()
         console.log(privateKey.privateKey.toString("hex"))
